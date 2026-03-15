@@ -259,7 +259,7 @@ class CalibreWrapper:
         # results. This command should return only 1 element, but we check just
         # in case.
         if len(b) == 1:
-            return Book(**b[0])
+            return Book(**{k: v for k, v in b[0].items() if not k.startswith("*")})
 
     def get_books(
         self,
@@ -302,7 +302,7 @@ class CalibreWrapper:
         if not len(books):
             return []
 
-        return [Book(**b) for b in books]
+        return [Book(**{k: v for k, v in b.items() if not k.startswith("*")}) for b in books]
 
     def _handle_sort(self, cmd: str, sort: list[str]) -> str:
         """Handle sort.
