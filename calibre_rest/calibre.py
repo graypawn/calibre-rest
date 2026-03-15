@@ -352,7 +352,7 @@ class CalibreWrapper:
         if search is None or not len(search):
             return cmd
 
-        cmd.append(f"--search={ ' '.join(search)}")
+        cmd.append(f"--search={' '.join(search)}")
         return cmd
 
     def add_multiple(
