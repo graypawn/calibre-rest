@@ -7,7 +7,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xdg-utils \
     xz-utils \
     libopengl0 \
-    libegl1 && \
+    libegl1 \
+    libxcb-cursor0 && \
     apt-get remove --purge --auto-remove -y && \
     apt-get clean && \
     rm -rf \
