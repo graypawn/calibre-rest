@@ -133,12 +133,13 @@ class CalibreWrapper:
             logger = logging.getLogger(__name__)
         self.logger = logger
 
-        self.cdb = path.abspath(calibredb)
-        self.lib = path.abspath(lib)
-        self.cdb_with_lib = f"{self.cdb} --with-library {self.lib}"
+        # Don't use abspath: lib may be a remote URL
+        self.cdb = calibredb
+        self.lib = lib
+        self.cdb_with_lib = [self.cdb, "--with-library", self.lib]
 
         if username != "" and password != "":
-            self.cdb_with_lib += f" --username {username} --password {password}"
+            self.cdb_with_lib.extend(["--username", username, "--password", password])
 
         # It is safer to limit calibredb to running one operation at any given
         # time. Any concurrent requests will result in calibre complaining.
@@ -162,15 +163,15 @@ class CalibreWrapper:
                 f"Failed to find Calibre database file {path.join(self.lib, 'metadata.db')}"
             )
 
-    def _run(self, cmd: str) -> (str, str):
+    def _run(self, cmd: list[str] | str) -> (str, str):
         """Execute calibredb on the command line.
 
         Any stderr that is returned with a zero exit code will also be logged as
         a warning.
 
         Args:
-            cmd (str): Full command string to execute. This string will be split
-                appropriately with shlex.split.
+            cmd (list[str] | str): Command to execute as a list of arguments,
+                or a string which will be split with shlex.split.
 
         Returns:
             str: Stdout of command
@@ -183,11 +184,15 @@ class CalibreWrapper:
                 be running.
         """
         self.logger.debug(f'Running "{cmd}"')
+
+        if isinstance(cmd, str):
+            cmd = shlex.split(cmd)
+
         try:
             self.mutex.acquire()
 
             process = subprocess.run(
-                shlex.split(cmd),
+                cmd,
                 capture_output=True,
                 check=True,
                 text=True,
@@ -219,8 +224,7 @@ class CalibreWrapper:
         Returns:
             str: calibredb version
         """
-
-        cmd = f"{self.cdb} --version"
+        cmd = [self.cdb, "--version"]
         out, _ = self._run(cmd)
 
         match = re.search(self.CALIBRE_VERSION_REGEX, out)
@@ -240,11 +244,13 @@ class CalibreWrapper:
         """
         validate_id(id)
 
-        cmd = (
-            f"{self.cdb_with_lib} list "
-            f"--for-machine --fields=all "
-            f"--search=id:{id} --limit=1"
-        )
+        cmd = self.cdb_with_lib + [
+            "list",
+            "--for-machine",
+            "--fields=all",
+            f"--search=id:{id}",
+            "--limit=1",
+        ]
         out, _ = self._run(cmd)
 
         # object_hook arg cannot be used as it results in a nested instance
@@ -287,11 +293,12 @@ class CalibreWrapper:
         if not all:
             max_limit = "5000"
 
-        cmd = (
-            f"{self.cdb_with_lib} list "
-            f"--for-machine --fields=all "
-            f"--limit={max_limit}"
-        )
+        cmd = self.cdb_with_lib + [
+            "list",
+            "--for-machine",
+            "--fields=all",
+            f"--limit={max_limit}",
+        ]
 
         cmd = self._handle_sort(cmd, sort)
         cmd = self._handle_search(cmd, search)
@@ -304,22 +311,22 @@ class CalibreWrapper:
 
         return [Book(**{k: v for k, v in b.items() if not k.startswith("*")}) for b in books]
 
-    def _handle_sort(self, cmd: str, sort: list[str]) -> str:
+    def _handle_sort(self, cmd: list, sort: list[str]) -> list:
         """Handle sort.
 
         Defaults to ascending sort, unless a `-` is prepended to ANY sort keys.
         Sort keys that are not supported are dropped with a warning.
 
         Args:
-            cmd (str): Command string to run
+            cmd (list): Command list to run
             sort (list[str]): List of sort keys
 
         Returns:
-            str: Command string with sort flags
+            list: Command list with sort flags
         """
         if sort is None or not len(sort):
             # default to ascending
-            cmd += " --ascending"
+            cmd.append("--ascending")
             return cmd
 
         # filter for unsupported sort keys
@@ -333,20 +340,19 @@ class CalibreWrapper:
 
         descending = any(map(lambda x: x.startswith("-"), safe_sort))
         if not descending:
-            cmd += " --ascending"
+            cmd.append("--ascending")
 
         if len(safe_sort):
             safe_sort = [x.removeprefix("-") for x in safe_sort]
-            safe_sort = ",".join(safe_sort)
-            cmd += f" --sort-by={safe_sort}"
+            cmd.append(f"--sort-by={','.join(safe_sort)}")
 
         return cmd
 
-    def _handle_search(self, cmd: str, search: list[str]) -> str:
+    def _handle_search(self, cmd: list, search: list[str]) -> list:
         if search is None or not len(search):
             return cmd
 
-        cmd += f' --search "{" ".join(search)}"'
+        cmd.append(f"--search={ ' '.join(search)}")
         return cmd
 
     def add_multiple(
@@ -387,7 +393,7 @@ class CalibreWrapper:
         if any(map(lambda x: not path.exists(x), book_paths)):
             raise FileNotFoundError(f"Failed to find book at {book_paths}")
 
-        cmd = f"{self.cdb_with_lib} add {' '.join(book_paths)}"
+        cmd = self.cdb_with_lib + ["add"] + book_paths
         return self._run_add(cmd, book, automerge)
 
     def add_one(
@@ -428,8 +434,7 @@ class CalibreWrapper:
         if not path.exists(book_path):
             raise FileNotFoundError(f"Failed to find book at {book_path}")
 
-        cmd = f"{self.cdb_with_lib} add {book_path}"
-
+        cmd = self.cdb_with_lib + ["add", book_path]
         return self._run_add(cmd, book, automerge)
 
     def add_one_empty(self, book: Book = None, automerge: str = "ignore") -> list[int]:
@@ -445,11 +450,11 @@ class CalibreWrapper:
                 IDs can be returned when the added book is merged with multiple
                 existing books.
         """
-        cmd = f"{self.cdb_with_lib} add --empty"
+        cmd = self.cdb_with_lib + ["add", "--empty"]
         return self._run_add(cmd, book, automerge)
 
     def _run_add(
-        self, cmd: str, book: Book = None, automerge: str = "ignore"
+        self, cmd: list, book: Book = None, automerge: str = "ignore"
     ) -> list[int]:
         """Run calibredb add subcommand for all add_* methods.
 
@@ -457,7 +462,7 @@ class CalibreWrapper:
         of response to return.
 
         Args:
-            cmd (str): Command string to run.
+            cmd (list): Command list to run.
             book (Book): Optional book instance with metadata.
             automerge (str): Defaults to "ignore".
 
@@ -469,13 +474,13 @@ class CalibreWrapper:
             Exception: Unforeseen error when adding book.
         """
         if automerge in self.AUTOMERGE_VALID_VALUES:
-            cmd += f" --automerge={automerge}"
+            cmd.append(f"--automerge={automerge}")
         else:
             logging.warning(
                 f'automerge value "{automerge}" not supported. '
                 f'Using "--automerge ignore".'
             )
-            cmd += " --automerge=ignore"
+            cmd.append("--automerge=ignore")
 
         cmd = self._handle_add_flags(cmd, book)
         out, stderr = self._run(cmd)
@@ -522,18 +527,18 @@ class CalibreWrapper:
         self.logger.error(f"COMMAND: {cmd}\n\nSTDOUT:\n{out}\nSTDERR:\n{stderr}")
         raise Exception("Could not parse calibredb add output, something went wrong...")
 
-    def _handle_add_flags(self, cmd: str, book: Book = None) -> str:
+    def _handle_add_flags(self, cmd: list, book: Book = None) -> list:
         """Build flags for add_* methods.
 
         Args:
-            cmd (string): Original command string.
+            cmd (list): Original command list.
             book (Book): Optional book instance. All author values will be joined
                 with the " & " separator. All other list values will be joined with the
                 "," separator. All identifiers pairs will be turned into the form
                 "abc:123,foo:bar".
 
         Returns:
-            string: Full command string with flags.
+            list: Full command list with flags.
         """
         if book is None:
             return cmd
@@ -545,9 +550,8 @@ class CalibreWrapper:
 
                 if flag == "identifiers":
                     for k, v in value.items():
-                        # ensure valid form of ABC:XXX
                         identifier = f"{k}:{v}"
-                        cmd += f" --{flag_name} {quote(identifier)}"
+                        cmd.extend([f"--{flag_name}", identifier])
                     break
 
                 elif isinstance(value, list):
@@ -556,7 +560,7 @@ class CalibreWrapper:
                     else:
                         value = join_list(value, ",")
 
-                cmd += f" --{flag_name} {quote(str(value))}"
+                cmd.extend([f"--{flag_name}", str(value)])
         return cmd
 
     def remove(self, ids: list[int], permanent: bool = False) -> None:
@@ -575,9 +579,9 @@ class CalibreWrapper:
         if not all(i >= 0 for i in ids):
             raise ValueError(f"{ids=} not allowed")
 
-        cmd = f'{self.cdb_with_lib} remove {",".join(map(str, ids))}'
+        cmd = self.cdb_with_lib + ["remove", ",".join(map(str, ids))]
         if permanent:
-            cmd += " --permanent"
+            cmd.append("--permanent")
 
         self._run(cmd)
 
@@ -593,11 +597,11 @@ class CalibreWrapper:
         """
         validate_id(id)
 
-        cmd = f"{self.cdb_with_lib} add_format {id}"
+        cmd = self.cdb_with_lib + ["add_format", str(id)]
         if replace:
-            cmd += " --dont-replace"
+            cmd.append("--dont-replace")
         if data_file:
-            cmd += " --as-extra-data-file"
+            cmd.append("--as-extra-data-file")
 
         out, _ = self._run(cmd)
         return out
@@ -611,8 +615,7 @@ class CalibreWrapper:
         """
         validate_id(id)
 
-        # TODO check format
-        cmd = f"{self.cdb_with_lib} remove_format {id} {format}"
+        cmd = self.cdb_with_lib + ["remove_format", str(id), format]
         out, _ = self._run(cmd)
         return out
 
@@ -624,7 +627,7 @@ class CalibreWrapper:
         """
         validate_id(id)
 
-        cmd = f"{self.cdb_with_lib} show_metadata --as-opf {id}"
+        cmd = self.cdb_with_lib + ["show_metadata", "--as-opf", str(id)]
         out, _ = self._run(cmd)
         return out
 
@@ -650,12 +653,12 @@ class CalibreWrapper:
         if self.get_book(id) is None:
             return -1
 
-        cmd = f"{self.cdb_with_lib} set_metadata {id}"
+        cmd = self.cdb_with_lib + ["set_metadata", str(id)]
 
         if metadata_path:
             if not path.exists(metadata_path):
                 raise FileNotFoundError(f"Metadata file {metadata_path} does not exist")
-            cmd += f" {metadata_path}"
+            cmd.append(metadata_path)
 
         elif book is not None:
             cmd = self._handle_update_flags(cmd, book)
@@ -666,18 +669,18 @@ class CalibreWrapper:
         self._run(cmd)
         return id
 
-    def _handle_update_flags(self, cmd: str, book: Book = None) -> str:
+    def _handle_update_flags(self, cmd: list, book: Book = None) -> list:
         """Build flags for set_metadata.
 
         Args:
-            cmd (string): Original command string.
+            cmd (list): Original command list.
             book (Book): Optional book instance. All author values will be joined
                 with the " & " separator. All other list values will be joined with the
                 "," separator. All identifiers pairs will be turned into the form
                 "abc:123,foo:bar".
 
         Returns:
-            str: Full command string with flags
+            list: Full command list with flags
         """
         if book is None:
             return cmd
@@ -687,23 +690,20 @@ class CalibreWrapper:
 
             if value:
                 if field == "identifiers":
-                    # format: --field identifiers:XXX:ABC,foo:bar
                     strs = []
                     for k, v in value.items():
                         identifier_str = f"{k}:{v}"
                         strs.append(identifier_str)
-                    cmd += f" --field {field}:{quote(join_list(strs, ','))}"
+                    cmd.extend(["--field", f"{field}:{join_list(strs, ',')}"])
                     break
 
                 elif isinstance(value, list):
                     if field == "authors":
-                        # format: --field "authors:Foo Bar & Bar Baz"
                         value = join_list(value, " & ")
                     else:
                         value = join_list(value, ",")
 
-                value = quote(f"{field}:{value}")
-                cmd += f" --field {value}"
+                cmd.extend(["--field", f"{field}:{value}"])
         return cmd
 
     def export(
@@ -722,16 +722,21 @@ class CalibreWrapper:
         for id in ids:
             validate_id(id)
 
-        cmd = f"{self.cdb_with_lib} export --dont-write-opf --dont-save-cover --single-dir"
+        cmd = self.cdb_with_lib + [
+            "export",
+            "--dont-write-opf",
+            "--dont-save-cover",
+            "--single-dir",
+        ]
 
         if exports_dir != "":
-            cmd += f" --to-dir={exports_dir}"
+            cmd.append(f"--to-dir={exports_dir}")
 
         # NOTE: if format does not exist, there is no error
         if formats is not None:
-            cmd += f" --formats {','.join(formats)}"
+            cmd.append(f"--formats={','.join(formats)}")
 
-        cmd += f' {" ".join([str(i) for i in ids])}'
+        cmd.extend([str(i) for i in ids])
 
         try:
             self._run(cmd)
