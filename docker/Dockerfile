@@ -8,7 +8,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xz-utils \
     libopengl0 \
     libegl1 \
-    libxcb-cursor0 && \
+    libxcb-cursor0 \
+    libfreetype6 \
+    libfontconfig1 \
+    libnss3 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libxtst6 \
+    libxkbcommon0 \
+    libxcb-icccm4 \
+    libxcb-image0 \
+    libxcb-keysyms1 \
+    libxcb-randr0 \
+    libxcb-render-util0 \
+    libxcb-xinerama0 \
+    libxcb-xkb1 \
+    libxkbcommon-x11-0 && \
     apt-get remove --purge --auto-remove -y && \
     apt-get clean && \
     rm -rf \
