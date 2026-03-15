@@ -6,7 +6,7 @@ from gunicorn.app.base import BaseApplication
 from calibre_rest.calibre import CalibreWrapper
 from config import DevConfig
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 LOG_FORMAT = "%(asctime)s %(name)s - %(levelname)s - %(message)s"
 
